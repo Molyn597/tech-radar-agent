@@ -1,0 +1,22 @@
+[Unit]
+Description=Tech-Radar Agent — Daily AI/ML Digest Daemon (08:15 Europe/Prague)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/tech-radar-agent
+ExecStart=/home/ubuntu/tech-radar-agent/.venv/bin/python daemon.py --bot
+Restart=always
+RestartSec=10
+StartLimitBurst=5
+StartLimitIntervalSec=120
+EnvironmentFile=/home/ubuntu/tech-radar-agent/.env
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tech-radar
+
+[Install]
+WantedBy=multi-user.target

@@ -10,7 +10,12 @@ import os
 import platform
 from typing import Optional
 
-# Telegram target (loaded securely from environment / registry, no hardcoded chat IDs)
+# Telegram target — lazy via PEP 562 __getattr__ so module import order does not
+# require secret env vars to be set before helper functions are defined.
+CHAT_ID: int  # resolved on first access; raises RuntimeError if missing
+THREAD_ID: Optional[int]  # resolved on first access; None if missing
+
+
 def get_chat_id() -> int:
     val = _get_secret("TELEGRAM_CHAT_ID")
     if not val:
@@ -21,10 +26,6 @@ def get_chat_id() -> int:
 def get_thread_id() -> Optional[int]:
     val = _get_secret("TELEGRAM_THREAD_ID")
     return int(val) if val else None
-
-
-CHAT_ID = get_chat_id()
-THREAD_ID = get_thread_id()
 
 # Model preference (free-tier fallback chain for OpenRouter)
 OPENROUTER_MODEL_CHAIN = (
@@ -86,6 +87,15 @@ def get_telegram_token() -> str:
 
 def get_openrouter_key() -> str:
     return _require_secret("OPENROUTER_API_KEY")
+
+
+def __getattr__(name: str):
+    """PEP 562 lazy attribute access — defers secret lookup until first use."""
+    if name == "CHAT_ID":
+        return get_chat_id()
+    if name == "THREAD_ID":
+        return get_thread_id()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 # HTTP defaults

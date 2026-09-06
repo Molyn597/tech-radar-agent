@@ -10,13 +10,27 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
+from pathlib import Path
 from typing import Any
 
 import requests
 
 from config import get_openrouter_key, HTTP_TIMEOUT, OPENROUTER_MODEL_CHAIN
 
+# TOON shared serializer (path bootstrap so analyzer.py works from any CWD)
+_COMMON_DIR = Path(__file__).resolve().parent.parent.parent / "common"
+if str(_COMMON_DIR) not in sys.path:
+    sys.path.insert(0, str(_COMMON_DIR))
+from toon_serializer import (  # noqa: E402
+    encode_toon,
+    record_savings,
+    format_savings_footer,
+)
+
 log = logging.getLogger(__name__)
+
+AGENT_NAME = "tech_radar_agent"
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -52,8 +66,11 @@ Rules:
 """
 
 
-def _build_user_payload(github_signal: dict[str, Any], community_signal: dict[str, Any]) -> str:
-    """Compress raw signal into a compact prompt-friendly JSON-ish block."""
+def _build_user_payload(github_signal: dict[str, Any], community_signal: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+    """Compress raw signal into a TOON-encoded prompt block.
+
+    Returns: (toon_payload, baseline_json_str, savings_dict)
+    """
     payload = {
         "github": {
             "tracked_releases": [
@@ -108,7 +125,12 @@ def _build_user_payload(github_signal: dict[str, Any], community_signal: dict[st
             ],
         },
     }
-    return json.dumps(payload, ensure_ascii=False, indent=2)
+    baseline_json = json.dumps(payload, ensure_ascii=False, indent=2)
+    toon_payload = encode_toon(payload)
+    # Pick the first model for telemetry pricing (chain starts with the cheapest)
+    model_name = OPENROUTER_MODEL_CHAIN[0] if OPENROUTER_MODEL_CHAIN else "openrouter"
+    savings = record_savings(AGENT_NAME, model_name, baseline_json, toon_payload)
+    return toon_payload, baseline_json, savings
 
 
 def _call_openrouter(prompt: str, model: str) -> str | None:
@@ -195,19 +217,24 @@ def _fallback_template(github_signal: dict[str, Any], community_signal: dict[str
 
 
 def synthesize(github_signal: dict[str, Any], community_signal: dict[str, Any]) -> str:
-    """Return a Czech Markdown digest (4 sections). Never raises."""
-    payload = _build_user_payload(github_signal, community_signal)
+    """Return a Czech Markdown digest (4 sections). Never raises.
+
+    The TOON-encoded payload is sent to the LLM, and a 1-line savings footer
+    is appended to the final digest so the user sees per-run token savings.
+    """
+    toon_payload, _baseline_json, savings = _build_user_payload(github_signal, community_signal)
     user_msg = (
-        "Zde je dnešní signál. Vyfiltruj a sestav digest podle pravidel:\n\n"
-        + payload
+        "Zde je dnešní signál (TOON format - mensi token footprint). "
+        "Vyfiltruj a sestav digest podle pravidel:\n\n"
+        + toon_payload
     )
 
     last_err: str | None = None
     for model in OPENROUTER_MODEL_CHAIN:
         text = _call_openrouter(user_msg, model)
         if text:
-            return text
+            return text + format_savings_footer(savings)
         last_err = f"model={model} returned nothing"
 
     log.warning("analyzer: all models failed (%s) — using fallback template", last_err)
-    return _fallback_template(github_signal, community_signal)
+    return _fallback_template(github_signal, community_signal) + format_savings_footer(savings)
