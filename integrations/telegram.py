@@ -13,6 +13,7 @@ from config import (
     TELEGRAM_MAX_CHARS,
     HTTP_TIMEOUT,
     get_telegram_token,
+    get_proposals_thread_id,
 )
 
 log = logging.getLogger(__name__)
@@ -77,5 +78,31 @@ def send_markdown_chunks(text: str) -> list[dict[str, Any]]:
             header = f"*({i}/{len(parts)})*\n"
             part = header + part
         result = send_message(part)
+        results.append(result or {"ok": False, "error": "send_failed"})
+    return results
+
+
+def send_proposals_summary(proposals: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    """Send a short architecture-proposal summary to the optional proposals thread.
+
+    Returns None (no-op, not an error) if TELEGRAM_PROPOSALS_THREAD_ID is unset or
+    there are no proposals — callers should treat both as "nothing to send".
+    """
+    thread_id = get_proposals_thread_id()
+    if thread_id is None or not proposals:
+        return None
+
+    lines = ["*🧠 Architecture Proposals*"]
+    for p in proposals[:5]:
+        ap = p.get("actionable_proposal", {}) or {}
+        lines.append(
+            f"• *{p.get('title', '(untitled)')}* "
+            f"[{p.get('relevance', '?')}/{p.get('impact_feasibility', '?')}] — "
+            f"{ap.get('summary', '')}"
+        )
+    text = "\n".join(lines)
+    results: list[dict[str, Any]] = []
+    for part in _split_for_telegram(text):
+        result = send_message(part, thread_id=thread_id)
         results.append(result or {"ok": False, "error": "send_failed"})
     return results

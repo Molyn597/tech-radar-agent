@@ -3,9 +3,11 @@
 Flow: fetch (GitHub + community) -> dedup -> synthesize -> send -> mark seen.
 
 Usage:
-    python main.py                # full run, sends to Telegram
-    python main.py --dry-run      # prints digest to stdout, no Telegram
-    python main.py --limit N      # cap items per source (default 30)
+    python main.py                        # full run, sends to Telegram
+    python main.py --dry-run              # prints digest to stdout, no Telegram
+    python main.py --limit N              # cap items per source (default 30)
+    python main.py --evaluate             # also generate architecture proposals
+    python main.py --export-orchestrator  # print proposals as an Orchestrator briefing
 """
 
 from __future__ import annotations
@@ -16,11 +18,17 @@ import logging
 import sys
 from typing import Any
 
+if sys.platform == "win32":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from config import CHAT_ID, THREAD_ID
 
 from scrapers import fetch_github_signal, fetch_community_signal
-from core import filter_new, mark_seen, synthesize
-from integrations import send_markdown_chunks
+from core import filter_new, mark_seen, synthesize, generate_proposals, format_proposals_markdown
+from integrations import send_markdown_chunks, send_proposals_summary
 
 logging.basicConfig(
     level=logging.INFO,
@@ -72,7 +80,13 @@ def collect_signal(item_limit: int) -> tuple[dict[str, Any], list[dict[str, Any]
     return {"github": gh, "community": co_filtered}, new_flat
 
 
-def run(dry_run: bool = False, item_limit: int = 30) -> int:
+def run(
+    dry_run: bool = False,
+    item_limit: int = 30,
+    evaluate: bool = False,
+    eval_model: str | None = None,
+    export_orchestrator: bool = False,
+) -> int:
     log.info("start chat_id=%s thread_id=%s dry_run=%s limit=%d",
              CHAT_ID, THREAD_ID, dry_run, item_limit)
     signals, new_items = collect_signal(item_limit)
@@ -94,18 +108,33 @@ def run(dry_run: bool = False, item_limit: int = 30) -> int:
         print(f"digest length: {len(full)} chars")
         print("=" * 60)
         print(full)
-        return 0
+    else:
+        log.info("step=telegram")
+        results = send_markdown_chunks(full)
+        ok_count = sum(1 for r in results if r and r.get("ok"))
+        log.info("telegram: %d/%d chunks ok", ok_count, len(results))
+        if ok_count == 0:
+            log.error("telegram: no chunks delivered")
+            return 3
 
-    log.info("step=telegram")
-    results = send_markdown_chunks(full)
-    ok_count = sum(1 for r in results if r and r.get("ok"))
-    log.info("telegram: %d/%d chunks ok", ok_count, len(results))
-    if ok_count == 0:
-        log.error("telegram: no chunks delivered")
-        return 3
+        log.info("step=mark_seen")
+        mark_seen(new_items)
 
-    log.info("step=mark_seen")
-    mark_seen(new_items)
+    if evaluate or export_orchestrator:
+        log.info("step=evaluator")
+        proposals = generate_proposals(signals["github"], signals["community"], model=eval_model)
+        log.info("evaluator: %d proposals", len(proposals))
+
+        if export_orchestrator:
+            print("=" * 60)
+            print("ORCHESTRATOR BRIEFING — Tech-Radar architecture proposals")
+            print(f"generated_at={signals['github'].get('fetched_at', '')} count={len(proposals)}")
+            print("=" * 60)
+            print(format_proposals_markdown(proposals))
+
+        if not dry_run and proposals:
+            send_proposals_summary(proposals)
+
     log.info("done")
     return 0
 
@@ -118,6 +147,15 @@ def main(argv: list[str] | None = None) -> int:
                         help="Max community items to consider (default 30).")
     parser.add_argument("--json", action="store_true",
                         help="Dump the raw scraped signal to stdout (debug).")
+    parser.add_argument("--evaluate", "--proposals", action="store_true", dest="evaluate",
+                        help="Run the architecture evaluator over today's high-signal items "
+                             "and save actionable implementation proposals to data/proposals/.")
+    parser.add_argument("--eval-model", type=str, default=None,
+                        help="Override the LLM used for evaluation (default: first model in "
+                             "config.OPENROUTER_MODEL_CHAIN).")
+    parser.add_argument("--export-orchestrator", action="store_true",
+                        help="Print a clean structured briefing of the proposals to stdout "
+                             "for direct hand-off to an Orchestrator. Implies --evaluate.")
     args = parser.parse_args(argv)
 
     if args.json:
@@ -127,7 +165,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        return run(dry_run=args.dry_run, item_limit=args.limit)
+        return run(
+            dry_run=args.dry_run,
+            item_limit=args.limit,
+            evaluate=args.evaluate or args.export_orchestrator,
+            eval_model=args.eval_model,
+            export_orchestrator=args.export_orchestrator,
+        )
     except KeyboardInterrupt:
         return 130
 

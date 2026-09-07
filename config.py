@@ -27,6 +27,16 @@ def get_thread_id() -> Optional[int]:
     val = _get_secret("TELEGRAM_THREAD_ID")
     return int(val) if val else None
 
+
+def get_proposals_thread_id() -> Optional[int]:
+    """Optional separate Telegram thread for architecture-proposal summaries.
+
+    Returns None if unset — callers must treat that as "skip this notification",
+    not as an error.
+    """
+    val = _get_secret("TELEGRAM_PROPOSALS_THREAD_ID")
+    return int(val) if val else None
+
 # Model preference (free-tier fallback chain for OpenRouter)
 OPENROUTER_MODEL_CHAIN = (
     "minimax/minimax-m3:free",   # primary per spec (MiniMax 3 / openrouter free)
@@ -107,6 +117,15 @@ USER_AGENT_GENERIC = "TechRadarBot/1.0"
 # Dedup window
 DEDUP_WINDOW_DAYS = 14
 HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "history.json")
+PROPOSALS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "proposals")
+
+# Evaluator — candidate filtering + deep-dive limits
+EVALUATOR_KEYWORDS = (
+    "agent", "token", "cache", "caching", "compression", "vllm", "litellm",
+    "subagent", "workflow", "tool", "tools", "orchestrat", "prompt",
+)
+EVALUATOR_MAX_CANDIDATES = 8
+EVALUATOR_README_CHARS = 2000
 
 # Telegram chunking
 TELEGRAM_MAX_CHARS = 4000
