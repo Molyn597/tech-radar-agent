@@ -31,8 +31,8 @@ from config import CHAT_ID, THREAD_ID  # noqa: E402
 
 # Local digest pipeline (same one main.py uses)
 from scrapers import fetch_github_signal, fetch_community_signal  # noqa: E402
-from core import filter_new, mark_seen, synthesize  # noqa: E402
-from integrations import send_markdown_chunks  # noqa: E402
+from core import filter_new, mark_seen, synthesize, generate_proposals  # noqa: E402
+from integrations import send_markdown_chunks, send_proposals_summary  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -133,6 +133,13 @@ def _run_digest(item_limit: int = DEFAULT_ITEM_LIMIT) -> int:
 
         log.info("step=mark_seen")
         mark_seen(new_flat)
+
+        log.info("step=evaluator")
+        proposals = generate_proposals(signals["github"], signals["community"])
+        if proposals:
+            log.info("evaluator: %d proposals", len(proposals))
+            send_proposals_summary(proposals)
+
         log.info("done")
         return 0
     except Exception as exc:  # noqa: BLE001 — daemon must not die silently
