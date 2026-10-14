@@ -104,20 +104,16 @@ def fetch_trending_python() -> list[dict[str, Any]]:
             timeout=HTTP_TIMEOUT,
         )
         if resp.ok:
-            # Very lightweight parse — extract repo links in /owner/repo form
+            # Very lightweight parse — repo names are the links inside <h2 class="h3 ..."> headings
             import re
-            hrefs = re.findall(r'href="(/[^"/]+/[^"/]+)"', resp.text)
+            hrefs = re.findall(r'<h2 class="h3[^"]*">\s*<a [^>]*?href="/([^"/]+/[^"/]+)"', resp.text)
             seen: set[str] = set()
-            for href in hrefs:
-                # Filter out non-repo links (issues, pulls, profiles)
-                parts = href.strip("/").split("/")
-                if len(parts) == 2 and parts[0] and parts[1]:
-                    full = f"{parts[0]}/{parts[1]}"
-                    if full not in seen and not full.startswith("trending"):
-                        seen.add(full)
-                        items.append({"repo": full, "url": f"https://github.com{full}"})
-                        if len(items) >= 10:
-                            break
+            for full in hrefs:
+                if full not in seen:
+                    seen.add(full)
+                    items.append({"repo": full, "url": f"https://github.com/{full}"})
+                    if len(items) >= 10:
+                        break
     except requests.RequestException as exc:
         log.warning("github_radar: trending HTML scrape failed: %s", exc)
 

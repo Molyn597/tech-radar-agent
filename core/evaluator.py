@@ -36,11 +36,22 @@ from .dedup import filter_new, mark_seen
 _COMMON_DIR = Path(__file__).resolve().parent.parent.parent / "common"
 if str(_COMMON_DIR) not in sys.path:
     sys.path.insert(0, str(_COMMON_DIR))
-from toon_serializer import (  # noqa: E402
-    encode_toon,
-    record_savings,
-    format_savings_footer,
-)
+try:
+    from toon_serializer import (  # noqa: E402
+        encode_toon,
+        record_savings,
+        format_savings_footer,
+    )
+except ImportError:
+    # Optional shared module (../common); fall back to compact JSON without savings telemetry.
+    def encode_toon(obj: Any) -> str:
+        return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+
+    def record_savings(*args: Any) -> dict:
+        return {}
+
+    def format_savings_footer(*args: Any) -> str:
+        return ""
 
 log = logging.getLogger(__name__)
 
